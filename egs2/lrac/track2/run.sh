@@ -11,7 +11,7 @@ opts="--audio_format wav "
 
 train_set=speech
 valid_set=speech_validation
-test_sets="open_testset_track1_clean open_testset_track1_noisy open_testset_track1_reverb"
+test_sets="open_testset_track2_clean open_testset_track2_noisy open_testset_track2_reverb"
 
 train_config=conf/train.yaml
 inference_config=conf/decode.yaml

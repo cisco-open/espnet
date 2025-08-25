@@ -239,7 +239,7 @@ if ! "${skip_data_prep}"; then
     if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
         log "Stage 1: Data preparation for data/${train_set}, data/${valid_set}, etc."
         log "This is handled in the lrac data generation repo. Run the recipe there and copy the data folder here!!!"
-        DIRS=("./data" "./data/speech" "./data/speech_validation" "./data/open_testset_track1_clean" "./data/open_testset_track1_noisy" "./data/open_testset_track1_reverb")
+        DIRS=("./data" "./data/speech" "./data/speech_validation" "./data/open_testset_track2_clean" "./data/open_testset_track2_noisy" "./data/open_testset_track2_reverb")
         for DIR in "${DIRS[@]}"; do
             if [ ! -d "$DIR" ]; then
                 echo "Assertion failed: Directory '$DIR' does not exist." >&2
