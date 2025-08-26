@@ -261,7 +261,7 @@ def inference(
             output_dict = audio_coding(**batch)
 
             key = keys[0]
-            insize = next(iter(batch.values())).size(0) + 1
+            insize = next(iter(batch.values())).size(0)
             if output_dict.get("resyn_audio") is not None:
                 wav = output_dict["resyn_audio"]
                 # Note(jiatong): Assume the wav is single channel here
