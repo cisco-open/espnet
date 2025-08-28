@@ -6,7 +6,7 @@ The challenge targets low-complexity low-bitrate speech codecs that can operate 
 
 The challenge has two tracks: 
 - Track 1 (Transparency Codec): Focuses on minimizing percetual distortion while remaining robust to noise and reverberation. 
-- Track 2 (Enhancement Codec): Extends Track 1 by incorporating denoising and derevrberation. 
+- Track 2 (Enhancement Codec): Extends Track 1 by incorporating denoising and dereverberation. 
 
 More details: [Challenge Tracks](https://lrac.short.gy/tracks).
 
