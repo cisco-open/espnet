@@ -77,5 +77,7 @@ Main entry point for training.
 - [`gan_codec_inference.py`](https://github.com/cisco-open/espnet/blob/master/espnet2/bin/gan_codec_inference.py) 
 Main entry point for inference.
 
+We also provide an [Excel sheet](https://github.com/cisco-open/espnet/blob/master/egs2/lrac/LRAC-Challenge-Baseline-Models-Design-Sheet.xlsx) that lists the hyperparameters of the baseline models and provide analytic formula-based calculation of the computational complexity, field of view, and algorithmic latency of each layer and the overall networks. 
+
 ## References
 1. Parker, J. D., Smirnov, A., Pons, J., Carr, C. J., Zukowski, Z., Evans, Z., & Liu, X. (2024). Scaling transformers for low-bitrate high-quality speech coding. arXiv preprint arXiv:2411.19842.
