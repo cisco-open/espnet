@@ -192,15 +192,15 @@ avoid_allzero_segment: true
 #                OTHER TRAINING SETTING                  #
 ##########################################################
 num_iters_per_epoch: 10000 # number of iterations per epoch
-max_epoch: 1200            # number of epochs
+max_epoch: 1325            # number of epochs
 accum_grad: 1             # gradient accumulation
-batch_size: 384            # batch size, this will be splitted among gpus
+batch_size: 1024            # batch size, this will be splitted among gpus
 batch_type: unsorted      # how to make batch
 
 
 iterator_type: chunk
 chunk_length: 62400
-num_cache_chunks: 12000
+num_cache_chunks: 32000
 
 grad_clip: -1             # gradient clipping norm
 grad_noise: false         # whether to use gradient noise injection
