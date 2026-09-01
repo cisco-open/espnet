@@ -5,7 +5,7 @@
 import functools
 import math
 import random
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -71,7 +71,9 @@ class FunCodec(AbsGANCodec):
             "quantizer_kmeans_iters": 50,
             "quantizer_threshold_ema_dead_code": 2,
             "quantizer_target_bandwidth": [7.5, 15],
-            "quantizer_dropout": True,
+            # Preserve the previous ``True`` behavior explicitly. This legacy
+            # implementation interprets the value as a probability.
+            "quantizer_dropout": 1.0,
             "codec_domain": ["time", "time"],
             "domain_conf": {},
         },
@@ -519,7 +521,7 @@ class FunCodecGenerator(nn.Module):
         quantizer_kmeans_iters: int = 50,
         quantizer_threshold_ema_dead_code: int = 2,
         quantizer_target_bandwidth: List[float] = [7.5, 15],
-        quantizer_dropout: bool = True,
+        quantizer_dropout: Union[bool, float] = 1.0,
         codec_domain: List = ("time", "time"),
         domain_conf: Optional[Dict] = {},
         audio_normalize: bool = False,

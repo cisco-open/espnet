@@ -3,11 +3,17 @@
 
 """Test code for SoundStream modules."""
 
+import inspect
+
 import numpy as np  # noqa
 import pytest
 import torch
 
-from espnet2.gan_codec.funcodec.funcodec import FunCodecDiscriminator, FunCodecGenerator
+from espnet2.gan_codec.funcodec.funcodec import (
+    FunCodec,
+    FunCodecDiscriminator,
+    FunCodecGenerator,
+)
 from espnet2.gan_codec.shared.loss.freq_loss import MultiScaleMelSpectrogramLoss
 from espnet2.gan_tts.hifigan.loss import (
     DiscriminatorAdversarialLoss,
@@ -120,6 +126,14 @@ def make_mel_loss_args(**kwargs):
     )
     defaults.update(kwargs)
     return defaults
+
+
+def test_funcodec_quantizer_dropout_default():
+    generator_defaults = inspect.signature(FunCodec).parameters["generator_params"].default
+    assert generator_defaults["quantizer_dropout"] == 1.0
+
+    generator = FunCodecGenerator(**make_generator_args())
+    assert generator.quantizer.quantizer_dropout == 1.0
 
 
 @pytest.mark.skipif(

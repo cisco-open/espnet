@@ -12,7 +12,7 @@
 """Residual vector quantizer implementation."""
 import math
 from dataclasses import dataclass, field  # noqa
-from typing import Optional
+from typing import Optional, Union
 
 import torch
 from torch import nn
@@ -56,7 +56,7 @@ class ResidualVectorQuantizer(nn.Module):
         kmeans_init: bool = True,
         kmeans_iters: int = 50,
         threshold_ema_dead_code: int = 2,
-        quantizer_dropout: bool = False,
+        quantizer_dropout: Union[bool, float] = False,
     ):
         super().__init__()
         self.n_q = n_q
@@ -67,7 +67,11 @@ class ResidualVectorQuantizer(nn.Module):
         self.kmeans_init = kmeans_init
         self.kmeans_iters = kmeans_iters
         self.threshold_ema_dead_code = threshold_ema_dead_code
-        self.quantizer_dropout = quantizer_dropout
+        # Backward compatibility: older configurations used booleans even though
+        # the implementation treated this value as a probability.
+        self.quantizer_dropout = float(quantizer_dropout)
+        if not 0.0 <= self.quantizer_dropout <= 1.0:
+            raise ValueError("quantizer_dropout must be between 0 and 1")
         self.vq = ResidualVectorQuantization(
             dim=self.dimension,
             codebook_dim=self.codebook_dim,

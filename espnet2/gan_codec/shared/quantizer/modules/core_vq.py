@@ -400,7 +400,7 @@ class VectorQuantization(nn.Module):
         kmeans_iters: int = 50,
         threshold_ema_dead_code: int = 2,
         commitment_weight: float = 1.0,
-        quantizer_dropout: bool = False,
+        quantizer_dropout: Union[bool, float] = False,
     ):
         super().__init__()
         _codebook_dim: int = default(codebook_dim, dim)

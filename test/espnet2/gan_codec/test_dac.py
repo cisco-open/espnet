@@ -3,12 +3,15 @@
 
 """Test code for SoundStream modules."""
 
+import inspect
+
 import numpy as np  # noqa
 import pytest
 import torch
 
-from espnet2.gan_codec.dac.dac import DACDiscriminator, DACGenerator
+from espnet2.gan_codec.dac.dac import DAC, DACDiscriminator, DACGenerator
 from espnet2.gan_codec.shared.loss.freq_loss import MultiScaleMelSpectrogramLoss
+from espnet2.gan_codec.shared.quantizer.residual_vq import ResidualVectorQuantizer
 from espnet2.gan_tts.hifigan.loss import (
     DiscriminatorAdversarialLoss,
     FeatureMatchLoss,
@@ -101,6 +104,26 @@ def make_mel_loss_args(**kwargs):
     )
     defaults.update(kwargs)
     return defaults
+
+
+def test_dac_quantizer_dropout_default():
+    generator_defaults = inspect.signature(DAC).parameters["generator_params"].default
+    assert generator_defaults["quantizer_dropout"] == 0.5
+
+    generator = DACGenerator(**make_generator_args())
+    assert generator.quantizer.quantizer_dropout == 0.5
+
+
+@pytest.mark.parametrize("probability", [-0.1, 1.1])
+def test_quantizer_dropout_probability_validation(probability):
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        ResidualVectorQuantizer(
+            dimension=2,
+            codebook_dim=2,
+            n_q=2,
+            bins=4,
+            quantizer_dropout=probability,
+        )
 
 
 @pytest.mark.skipif(

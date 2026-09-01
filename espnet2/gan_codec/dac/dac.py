@@ -5,7 +5,7 @@
 import functools
 import math
 import random
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import torch
@@ -65,7 +65,7 @@ class DAC(AbsGANCodec):
             "quantizer_kmeans_iters": 50,
             "quantizer_threshold_ema_dead_code": 2,
             "quantizer_target_bandwidth": [7.5, 15],
-            "quantizer_dropout": True,
+            "quantizer_dropout": 0.5,
         },
         discriminator_params: Dict[str, Any] = {
             "scale_follow_official_norm": False,
@@ -495,7 +495,7 @@ class DACGenerator(nn.Module):
         quantizer_kmeans_iters: int = 50,
         quantizer_threshold_ema_dead_code: int = 2,
         quantizer_target_bandwidth: List[float] = [7.5, 15],
-        quantizer_dropout: bool = True,
+        quantizer_dropout: Union[bool, float] = 0.5,
     ):
         """Initialize DAC Generator.
 
