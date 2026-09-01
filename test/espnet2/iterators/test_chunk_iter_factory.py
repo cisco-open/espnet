@@ -41,6 +41,25 @@ def test_ChunkIterFactory(chunk_length):
                 assert v.ndim == 2 and v.shape[0] == 2 and v.shape[1] in (3, 4, 5)
 
 
+def test_ChunkIterFactory_keeps_sample_equal_to_chunk_length():
+    class ExactLengthDataset:
+        def __getitem__(self, item):
+            return item, {"dummy": np.arange(3)}
+
+    iter_factory = ChunkIterFactory(
+        dataset=ExactLengthDataset(),
+        batches=[["a"]],
+        batch_size=1,
+        chunk_length=3,
+        collate_fn=CommonCollateFn(),
+    )
+
+    batches = list(iter_factory.build_iter(0))
+    assert len(batches) == 1
+    assert batches[0][0] == ["a"]
+    assert batches[0][1]["dummy"].shape == (1, 3)
+
+
 class Dataset2:
     def __init__(self):
         self.data = {
