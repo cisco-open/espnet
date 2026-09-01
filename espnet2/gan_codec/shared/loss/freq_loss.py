@@ -3,7 +3,7 @@
 
 """Frequency-Related Loss"""
 
-from typing import Optional, List
+from typing import List, Optional, Union
 
 import numpy as np
 import torch
@@ -28,6 +28,9 @@ class MultiScaleMelSpectrogramLoss(torch.nn.Module):
         onesided (bool): Whether to use oneseded one.
         log_base (Optional[float]): Log base value.
         alphas (bool): Whether to use alphas as coefficients or not..
+        use_mse (bool): Add the alpha-weighted MSE term to each L1 scale.
+        scale_reduction (str): ``normalized`` preserves the legacy weighted
+            normalization, ``mean`` averages scales, and ``sum`` adds scales.
     """
 
     def __init__(
@@ -36,7 +39,7 @@ class MultiScaleMelSpectrogramLoss(torch.nn.Module):
         range_start: int = 6,
         range_end: int = 11,
         window: str = "hann",
-        n_mels: List[int] = None,
+        n_mels: Optional[Union[int, List[int]]] = None,
         fmin: Optional[int] = 0,
         fmax: Optional[int] = None,
         center: bool = True,
@@ -44,15 +47,32 @@ class MultiScaleMelSpectrogramLoss(torch.nn.Module):
         onesided: bool = True,
         log_base: Optional[float] = 10.0,
         alphas: bool = True,
+        use_mse: bool = True,
+        scale_reduction: str = "normalized",
     ):
         super().__init__()
         mel_loss = list()
         self.alphas = list()
         self.total = 0
         self.normalized = normalized
+        self.use_mse = use_mse
+        if scale_reduction not in ("normalized", "sum", "mean"):
+            raise ValueError(
+                "scale_reduction must be 'normalized', 'sum', or 'mean', "
+                f"but got {scale_reduction!r}"
+            )
+        self.scale_reduction = scale_reduction
         assert range_end > range_start, "error in index"
+        num_scales = range_end - range_start
         if n_mels is None:
-            n_mels = [80 for i in range(range_start, range_end)]
+            n_mels = [80] * num_scales
+        elif isinstance(n_mels, int):
+            n_mels = [n_mels] * num_scales
+        elif len(n_mels) < num_scales:
+            raise ValueError(
+                f"n_mels must provide at least {num_scales} values, "
+                f"but got {len(n_mels)}"
+            )
 
         for index, i in enumerate(range(range_start, range_end)):
             assert range_start > 2, "range start should be more than 2 for hop_length"
@@ -98,7 +118,14 @@ class MultiScaleMelSpectrogramLoss(torch.nn.Module):
         loss = 0.0
         for i in range(len(self.alphas)):
             l1 = self.mel_loss[i](y_hat, y)
-            l2 = self.mel_loss[i](y_hat, y, use_mse=True)
-            loss += l1 + self.alphas[i] * l2
-        loss = loss / self.total
+            loss += l1
+            if self.use_mse:
+                l2 = self.mel_loss[i](y_hat, y, use_mse=True)
+                loss += self.alphas[i] * l2
+
+        if self.scale_reduction == "normalized":
+            divisor = self.total if self.use_mse else len(self.mel_loss)
+            loss = loss / divisor
+        elif self.scale_reduction == "mean":
+            loss = loss / len(self.mel_loss)
         return loss
