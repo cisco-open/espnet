@@ -19,6 +19,7 @@ from espnet2.gan_codec.lrac.lrac import LRACConvBaseline
 from espnet2.gan_codec.lrac2.lrac2 import LRAC2ConvBaseline
 from espnet2.gan_codec.soundstream.soundstream import SoundStream
 from espnet2.gan_codec.vocodec.vocodec import VoCodec
+from espnet2.optimizers.optim_groups import configure_optimizer_param_groups
 from espnet2.tasks.abs_task import AbsTask, optim_classes
 from espnet2.train.class_choices import ClassChoices
 from espnet2.train.collate_fn import CommonCollateFn
@@ -351,19 +352,27 @@ class GANCodecTask(AbsTask):
         optim_g_class = optim_classes.get(args.optim)
         if optim_g_class is None:
             raise ValueError(f"must be one of {list(optim_classes)}: {args.optim}")
+        generator_params = (
+            configure_optimizer_param_groups(
+                model.codec.generator,
+                args.exclude_weight_decay_conf,
+            )
+            if args.exclude_weight_decay
+            else model.codec.generator.parameters()
+        )
         if args.sharded_ddp:
             try:
                 import fairscale
             except ImportError:
                 raise RuntimeError("Requiring fairscale. Do 'pip install fairscale'")
             optim_g = fairscale.optim.oss.OSS(
-                params=model.codec.generator.parameters(),
+                params=generator_params,
                 optim=optim_g_class,
                 **args.optim_conf,
             )
         else:
             optim_g = optim_g_class(
-                model.codec.generator.parameters(),
+                generator_params,
                 **args.optim_conf,
             )
         optimizers = [optim_g]
@@ -372,19 +381,27 @@ class GANCodecTask(AbsTask):
         optim_d_class = optim_classes.get(args.optim2)
         if optim_d_class is None:
             raise ValueError(f"must be one of {list(optim_classes)}: {args.optim2}")
+        discriminator_params = (
+            configure_optimizer_param_groups(
+                model.codec.discriminator,
+                args.exclude_weight_decay_conf,
+            )
+            if args.exclude_weight_decay
+            else model.codec.discriminator.parameters()
+        )
         if args.sharded_ddp:
             try:
                 import fairscale
             except ImportError:
                 raise RuntimeError("Requiring fairscale. Do 'pip install fairscale'")
             optim_d = fairscale.optim.oss.OSS(
-                params=model.codec.discriminator.parameters(),
+                params=discriminator_params,
                 optim=optim_d_class,
                 **args.optim2_conf,
             )
         else:
             optim_d = optim_d_class(
-                model.codec.discriminator.parameters(),
+                discriminator_params,
                 **args.optim2_conf,
             )
         optimizers += [optim_d]

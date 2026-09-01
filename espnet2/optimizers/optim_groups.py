@@ -45,20 +45,21 @@ def add_optimizer_hooks(
 
 
 def configure_optimizer(model, optim_class, optim_conf, weight_decay_conf):
-    # Set zero weight decay for some params
+    param_groups = configure_optimizer_param_groups(model, weight_decay_conf)
+    return optim_class(param_groups, **optim_conf)
+
+
+def configure_optimizer_param_groups(model, weight_decay_conf):
+    """Build optimizer groups with ESPnet's weight-decay exclusions."""
     add_optimizer_hooks(
         model,
         **weight_decay_conf,
     )
 
-    # Normal parameters
     all_params = list(model.parameters())
     params = [p for p in all_params if not hasattr(p, "_optim")]
+    param_groups = [{"params": params}] if params else []
 
-    # Instantiate base optimizer
-    optimizer = optim_class(params, **optim_conf)
-
-    # Add parameters with special hyperparameters
     hps = [getattr(p, "_optim") for p in all_params if hasattr(p, "_optim")]
     hps = [
         dict(s)
@@ -66,6 +67,6 @@ def configure_optimizer(model, optim_class, optim_conf, weight_decay_conf):
     ]  # Unique dicts
     for hp in hps:
         params = [p for p in all_params if getattr(p, "_optim", None) == hp]
-        optimizer.add_param_group({"params": params, **optim_conf, **hp})
+        param_groups.append({"params": params, **hp})
 
-    return optimizer
+    return param_groups
