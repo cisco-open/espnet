@@ -11,12 +11,14 @@ import torch
 from typeguard import typechecked
 
 from espnet2.gan_codec.abs_gan_codec import AbsGANCodec  # noqa
-from espnet2.gan_codec.lrac.lrac import LRACConvBaseline
 from espnet2.gan_codec.dac.dac import DAC
 from espnet2.gan_codec.encodec.encodec import Encodec
 from espnet2.gan_codec.espnet_model import ESPnetGANCodecModel
 from espnet2.gan_codec.funcodec.funcodec import FunCodec
+from espnet2.gan_codec.lrac.lrac import LRACConvBaseline
+from espnet2.gan_codec.lrac2.lrac2 import LRAC2ConvBaseline
 from espnet2.gan_codec.soundstream.soundstream import SoundStream
+from espnet2.gan_codec.vocodec.vocodec import VoCodec
 from espnet2.tasks.abs_task import AbsTask, optim_classes
 from espnet2.train.class_choices import ClassChoices
 from espnet2.train.collate_fn import CommonCollateFn
@@ -33,7 +35,9 @@ codec_choices = ClassChoices(
         encodec=Encodec,
         dac=DAC,
         funcodec=FunCodec,
-        lrac=LRACConvBaseline
+        lrac=LRACConvBaseline,
+        lrac2_conv=LRAC2ConvBaseline,
+        vocodec=VoCodec,
     ),
     default="soundstream",
 )
