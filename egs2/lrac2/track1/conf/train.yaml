@@ -1,0 +1,200 @@
+##########################################################
+#             LRAC 2 TRACK 1 VOCODEC MODEL               #
+##########################################################
+codec: vocodec
+codec_conf:
+    sampling_rate: 24000
+
+    generator_params:
+        # Time-frequency front end: 30 ms square-root Hann window, 10 ms hop.
+        hidden_dim: 172
+        n_fft: 720
+        hop_length: 240
+
+        encoder_num_convnext_blocks: 6
+        encoder_convnext_hidden_dim: 240
+        decoder_num_convnext_blocks: 6
+        # Keep the decoder expansion independently configurable from the encoder.
+        decoder_convnext_hidden_dim: 240
+        convnext_kernel_size: 7
+        # null disables layer scale. A positive value enables learnable gamma.
+        convnext_layer_scale_init_value: null
+
+        posnet_num_blocks: 4
+        posnet_kernel_size: 3
+        encoder_posnet_groups: [1, 1]
+        # Dense convolutions in blocks 1–2; groups=2 in blocks 3–4.
+        decoder_posnet_groups: [[1, 1], [1, 1], [2, 2], [2, 2]]
+        posnet_dropout: 0.1
+        attention_after: 2
+        attention_heads: 4
+        # 300 frames = three seconds of bounded history at a 10 ms hop.
+        attention_context_frames: 300
+        attention_lookahead_frames: 0
+        # GPU work tile only: this does not add lookahead or latency.
+        attention_query_tile_size: 64
+        latent_kernel_size: 3
+
+        # DAC-compatible trainable RVQ, extended to LRAC 2's maximum rate.
+        quantizer_codebook_dim: 8
+        quantizer_n_q: 32
+        quantizer_bins: 1024
+        # Half the samples use all 32 layers; the other half uniformly samples
+        # the configured target bitrates (1, 6, 12, 24, or 32 kbps).
+        quantizer_dropout: 0.5
+        quantizer_dropout_sampling: target_bandwidths
+        quantizer_projection_mode: per_layer
+        quantizer_projection_bias: true
+        quantizer_projection_norm: weight_norm
+        quantizer_normalized_lookup: true
+        quantizer_loss_normalization: full_batch
+        quantizer_target_bandwidth: [1, 6, 12, 24, 32]
+        max_magnitude: 100.0
+
+    # EnCodec-style discriminator with the exact VoCodec STFT scales and 1/4 hops.
+    discriminator_params:
+        msstft_discriminator_params:
+            filters: 32
+            in_channels: 1
+            out_channels: 1
+            sep_channels: false
+            n_ffts: [128, 256, 512, 1024, 2048]
+            hop_lengths: [32, 64, 128, 256, 512]
+            win_lengths: [128, 256, 512, 1024, 2048]
+            max_filters: 1024
+            filters_scale: 1
+            kernel_size: [3, 9]
+            dilations: [1, 2, 4]
+            stride: [1, 2]
+            normalized: true
+            norm: weight_norm
+            activation: LeakyReLU
+            activation_params:
+                negative_slope: 0.2
+
+    generator_adv_loss_params:
+        average_by_discriminators: false
+        loss_type: mse
+    discriminator_adv_loss_params:
+        average_by_discriminators: false
+        loss_type: mse
+    use_feat_match_loss: true
+    feat_match_loss_params:
+        average_by_discriminators: false
+        average_by_layers: false
+        include_final_outputs: true
+    use_dual_decoder: false
+
+    # DAC-style seven-scale natural-log mel L1 loss: sum, not mean.
+    use_mel_loss: true
+    mel_loss_params:
+        range_start: 5
+        range_end: 12
+        window: hann
+        n_mels: [5, 10, 20, 40, 80, 160, 320]
+        fmin: 0
+        fmax: null
+        log_base: null
+        alphas: false
+        use_mse: false
+        scale_reduction: sum
+
+    # Reported VoCodec weights. ESPnet's feature loss has no equation-level x2,
+    # hence lambda_feat_match=2 represents the report's 1.0 feature-loss weight.
+    lambda_mel: 15.0
+    lambda_feat_match: 2.0
+    lambda_adv: 2.0
+    lambda_quantization: 1.0
+    lambda_commit: 0.25
+    lambda_reconstruct: 0.0
+
+    cache_generator_outputs: true
+    use_loss_balancer: false
+
+##########################################################
+#               OPTIMIZER AND SCHEDULER                  #
+##########################################################
+# Apply AdamW decay to ordinary weights only. Biases, normalization parameters,
+# and nn.Embedding parameters (including the RVQ codebooks) use zero decay.
+# This grouping is applied to both generator and discriminator optimizers.
+exclude_weight_decay: true
+exclude_weight_decay_conf:
+    bias_weight_decay: false
+    normalization_weight_decay: false
+
+# The report specifies AdamW and the learning-rate schedule but not beta values;
+# [0.8, 0.99] is the documented DAC-compatible replication assumption.
+optim: adamw
+optim_conf:
+    lr: 3.0e-4
+    betas: [0.8, 0.99]
+    eps: 1.0e-8
+    weight_decay: 0.01
+scheduler: cosineannealingwarmuprestarts
+scheduler_conf:
+    first_cycle_steps: 1000000
+    cycle_mult: 1.0
+    max_lr: 3.0e-4
+    min_lr: 1.0e-6
+    warmup_steps: 25000
+    gamma: 1.0
+
+optim2: adamw
+optim2_conf:
+    lr: 3.0e-4
+    betas: [0.8, 0.99]
+    eps: 1.0e-8
+    weight_decay: 0.01
+scheduler2: cosineannealingwarmuprestarts
+scheduler2_conf:
+    first_cycle_steps: 1000000
+    cycle_mult: 1.0
+    max_lr: 3.0e-4
+    min_lr: 1.0e-6
+    warmup_steps: 25000
+    gamma: 1.0
+
+generator_first: true
+skip_discriminator_prob: 0
+
+##########################################################
+#                    TRAINING                            #
+##########################################################
+# One-million-update first scheduler cycle; epoch-based stop at 1700 epochs.
+num_iters_per_epoch: 4000
+max_epoch: 1700
+accum_grad: 1
+# Global batch: 24 examples/GPU on eight GPUs.
+batch_size: 192
+batch_type: unsorted
+
+iterator_type: chunk
+chunk_length: 72000  # three seconds at 24 kHz
+chunk_discard_short_samples: true
+num_cache_chunks: 12000
+
+grad_clip: -1
+grad_noise: false
+sort_in_batch: descending
+sort_batch: descending
+num_workers: 2
+use_amp: false
+log_interval: 50
+keep_nbest_models: 20
+num_att_plot: 0
+seed: 777
+patience: null
+# ESPnet alternates GAN branches and currently requires unused-parameter detection.
+unused_parameters: true
+best_model_criterion:
+-   - valid
+    - mel_loss
+    - min
+-   - train
+    - mel_loss
+    - min
+-   - train
+    - total_count
+    - max
+cudnn_deterministic: false
+cudnn_benchmark: true
