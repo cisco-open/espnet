@@ -12,10 +12,10 @@ codec_conf:
         hop_length: 240
 
         encoder_num_convnext_blocks: 6
-        encoder_convnext_hidden_dim: 240
+        encoder_convnext_hidden_dim: 216
         decoder_num_convnext_blocks: 6
         # Keep the decoder expansion independently configurable from the encoder.
-        decoder_convnext_hidden_dim: 240
+        decoder_convnext_hidden_dim: 216
         convnext_kernel_size: 7
         # null disables layer scale. A positive value enables learnable gamma.
         convnext_layer_scale_init_value: null
