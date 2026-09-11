@@ -104,6 +104,11 @@ class BoundedMultiheadAttention(nn.Module):
     ``query_tile_size`` only limits temporary tensors and GPU work granularity.
     It never changes the receptive field and therefore adds no algorithmic
     latency. Queries in each tile are evaluated in parallel on the GPU.
+
+    Rotary positional embeddings are optional. When enabled, standard absolute
+    position rotations are applied to queries and keys before query tiling. The
+    resulting attention scores depend on relative positions, while values are
+    left unchanged.
     """
 
     def __init__(
@@ -114,29 +119,83 @@ class BoundedMultiheadAttention(nn.Module):
         lookahead_frames: int = 0,
         query_tile_size: int = 64,
         bias: bool = True,
+        use_rope: bool = False,
+        rotary_dim: Optional[int] = None,
+        rope_base: float = 10000.0,
     ):
         super().__init__()
         if channels % num_heads:
             raise ValueError("channels must be divisible by num_heads")
         if context_frames < 1 or lookahead_frames < 0 or query_tile_size < 1:
             raise ValueError("invalid attention context, lookahead, or tile size")
+        head_dim = channels // num_heads
+        if rotary_dim is None:
+            rotary_dim = head_dim - head_dim % 2
+        if use_rope and (rotary_dim < 2 or rotary_dim > head_dim or rotary_dim % 2):
+            raise ValueError(
+                "rotary_dim must be a positive even value no larger than head_dim"
+            )
+        if rope_base <= 0:
+            raise ValueError("rope_base must be positive")
         self.channels = channels
         self.num_heads = num_heads
-        self.head_dim = channels // num_heads
+        self.head_dim = head_dim
         self.context_frames = context_frames
         self.lookahead_frames = lookahead_frames
         self.query_tile_size = query_tile_size
+        self.use_rope = use_rope
+        self.rotary_dim = rotary_dim
+        self.rope_base = rope_base
         self.norm = ConvLayerNorm(channels)
         self.qkv = nn.Conv1d(channels, 3 * channels, kernel_size=1, bias=bias)
         self.out_proj = nn.Conv1d(channels, channels, kernel_size=1, bias=bias)
+        if use_rope:
+            inverse_frequency = 1.0 / (
+                rope_base
+                ** (torch.arange(0, rotary_dim, 2, dtype=torch.float32) / rotary_dim)
+            )
+        else:
+            inverse_frequency = torch.empty(0)
+        # This is derived from the configuration and need not be checkpointed.
+        self.register_buffer(
+            "rope_inverse_frequency", inverse_frequency, persistent=False
+        )
 
-    def _qkv(self, x: torch.Tensor):
+    def _project_qkv(self, x: torch.Tensor):
         batch, _, frames = x.shape
         qkv = self.qkv(self.norm(x)).view(
             batch, 3, self.num_heads, self.head_dim, frames
         )
         q, k, v = qkv.unbind(dim=1)
         return q.transpose(-1, -2), k.transpose(-1, -2), v.transpose(-1, -2)
+
+    def _apply_rope(
+        self, tensor: torch.Tensor, positions: torch.Tensor
+    ) -> torch.Tensor:
+        """Apply pairwise rotary embeddings to the leading feature dimensions."""
+        if not self.use_rope:
+            return tensor
+        angles = torch.outer(
+            positions.to(self.rope_inverse_frequency.dtype),
+            self.rope_inverse_frequency,
+        )
+        cosines = angles.cos().to(tensor.dtype)[None, None]
+        sines = angles.sin().to(tensor.dtype)[None, None]
+        rotary = tensor[..., : self.rotary_dim]
+        even, odd = rotary[..., 0::2], rotary[..., 1::2]
+        rotated = torch.stack(
+            (even * cosines - odd * sines, even * sines + odd * cosines),
+            dim=-1,
+        ).flatten(-2)
+        return torch.cat((rotated, tensor[..., self.rotary_dim :]), dim=-1)
+
+    def _qkv(self, x: torch.Tensor, position_offset: int = 0):
+        q, k, v = self._project_qkv(x)
+        if self.use_rope:
+            positions = torch.arange(q.shape[-2], device=q.device) + position_offset
+            q = self._apply_rope(q, positions)
+            k = self._apply_rope(k, positions)
+        return q, k, v
 
     def _attention(
         self,
@@ -175,13 +234,15 @@ class BoundedMultiheadAttention(nn.Module):
         attended = attended.transpose(-1, -2).reshape(batch, self.channels, frames)
         return x + self.out_proj(attended)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        q, k, v = self._qkv(x)
+    def forward(self, x: torch.Tensor, position_offset: int = 0) -> torch.Tensor:
+        q, k, v = self._qkv(x, position_offset=position_offset)
         return self._finish(x, self._attention(q, k, v, self.query_tile_size))
 
-    def forward_reference(self, x: torch.Tensor) -> torch.Tensor:
+    def forward_reference(
+        self, x: torch.Tensor, position_offset: int = 0
+    ) -> torch.Tensor:
         """Dense reference path used to verify the tiled implementation."""
-        q, k, v = self._qkv(x)
+        q, k, v = self._qkv(x, position_offset=position_offset)
         return self._finish(x, self._attention(q, k, v, x.shape[-1]))
 
 
@@ -200,6 +261,9 @@ class PosNet(nn.Module):
         attention_context_frames: int = 300,
         attention_lookahead_frames: int = 0,
         attention_query_tile_size: int = 64,
+        attention_use_rope: bool = False,
+        attention_rotary_dim: Optional[int] = None,
+        attention_rope_base: float = 10000.0,
     ):
         super().__init__()
         if not 0 <= attention_after <= num_blocks:
@@ -230,6 +294,9 @@ class PosNet(nn.Module):
             context_frames=attention_context_frames,
             lookahead_frames=attention_lookahead_frames,
             query_tile_size=attention_query_tile_size,
+            use_rope=attention_use_rope,
+            rotary_dim=attention_rotary_dim,
+            rope_base=attention_rope_base,
         )
         self.output_norm = ConvLayerNorm(channels)
 

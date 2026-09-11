@@ -133,6 +133,9 @@ class VoCodecEncoder(nn.Module):
         attention_context_frames: int = 300,
         attention_lookahead_frames: int = 0,
         attention_query_tile_size: int = 64,
+        attention_use_rope: bool = False,
+        attention_rotary_dim: Optional[int] = None,
+        attention_rope_base: float = 10000.0,
         latent_kernel_size: int = 3,
     ):
         super().__init__()
@@ -163,6 +166,9 @@ class VoCodecEncoder(nn.Module):
             attention_context_frames=attention_context_frames,
             attention_lookahead_frames=attention_lookahead_frames,
             attention_query_tile_size=attention_query_tile_size,
+            attention_use_rope=attention_use_rope,
+            attention_rotary_dim=attention_rotary_dim,
+            attention_rope_base=attention_rope_base,
         )
         self.latent_projection = SConv1d(
             hidden_dim,
@@ -199,6 +205,9 @@ class VoCodecDecoder(nn.Module):
         attention_context_frames: int = 300,
         attention_lookahead_frames: int = 0,
         attention_query_tile_size: int = 64,
+        attention_use_rope: bool = False,
+        attention_rotary_dim: Optional[int] = None,
+        attention_rope_base: float = 10000.0,
         latent_kernel_size: int = 3,
         max_magnitude: float = 100.0,
     ):
@@ -222,6 +231,9 @@ class VoCodecDecoder(nn.Module):
             attention_context_frames=attention_context_frames,
             attention_lookahead_frames=attention_lookahead_frames,
             attention_query_tile_size=attention_query_tile_size,
+            attention_use_rope=attention_use_rope,
+            attention_rotary_dim=attention_rotary_dim,
+            attention_rope_base=attention_rope_base,
         )
         self.convnext = nn.Sequential(
             *[
@@ -273,6 +285,9 @@ class VoCodecGenerator(nn.Module):
         attention_context_frames: int = 300,
         attention_lookahead_frames: int = 0,
         attention_query_tile_size: int = 64,
+        attention_use_rope: bool = False,
+        attention_rotary_dim: Optional[int] = None,
+        attention_rope_base: float = 10000.0,
         latent_kernel_size: int = 3,
         quantizer_codebook_dim: int = 8,
         quantizer_n_q: int = 32,
@@ -304,6 +319,9 @@ class VoCodecGenerator(nn.Module):
             attention_context_frames=attention_context_frames,
             attention_lookahead_frames=attention_lookahead_frames,
             attention_query_tile_size=attention_query_tile_size,
+            attention_use_rope=attention_use_rope,
+            attention_rotary_dim=attention_rotary_dim,
+            attention_rope_base=attention_rope_base,
             latent_kernel_size=latent_kernel_size,
         )
         self.encoder = VoCodecEncoder(

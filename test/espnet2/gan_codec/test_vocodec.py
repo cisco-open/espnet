@@ -72,13 +72,24 @@ def test_dropout_sampling_strategy_is_configurable():
     assert all_layers.dropout_num_quantizers is None
 
 
+def test_rope_configuration_is_applied_to_encoder_and_decoder():
+    generator = tiny_generator(attention_use_rope=True, attention_rotary_dim=4)
+    for network in (generator.encoder, generator.decoder):
+        attention = network.posnet.attention
+        assert attention.use_rope
+        assert attention.rotary_dim == 4
+
+
 def test_invalid_dropout_sampling_strategy_is_rejected():
     with pytest.raises(ValueError, match="quantizer_dropout_sampling"):
         tiny_generator(quantizer_dropout_sampling="invalid")
 
 
-def test_complete_generator_respects_declared_latency():
-    generator = tiny_generator().eval()
+@pytest.mark.parametrize("attention_use_rope", [False, True])
+def test_complete_generator_respects_declared_latency(attention_use_rope):
+    generator = tiny_generator(
+        attention_use_rope=attention_use_rope, attention_rotary_dim=4
+    ).eval()
     assert_codec_streamable(
         generator,
         torch.randn(1, 1, 256),
