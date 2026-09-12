@@ -9,27 +9,36 @@ RECIPE_DIR = Path(__file__).resolve().parents[1]
 LRAC2_COMMON_DIR = RECIPE_DIR.parent / "common"
 sys.path.insert(0, str(LRAC2_COMMON_DIR))
 
-from vocodec_design_sheet import Variant, create_workbook  # noqa: E402
+from vocodec_design_sheet import (  # noqa: E402
+    Variant,
+    create_workbook,
+    validate_config_matches_variant,
+)
 
 
 VARIANT = Variant(
     track=1,
-    label="100 Hz / 32-layer",
+    label="100 Hz / 24-layer / RoPE",
     hop_size=240,
     attention_context_frames=300,
     attention_lookahead_frames=0,
     attention_heads=4,
-    rvq_layers=32,
-    model_dim=172,
+    rvq_layers=24,
+    model_dim=176,
     encoder_convnext_expansion_dim=216,
-    decoder_convnext_expansion_dim=216,
+    decoder_convnext_expansion_dim=200,
     decoder_posnet_groups_first=(1, 1),
     decoder_posnet_groups_last=(2, 2),
+    attention_use_rope=True,
+    attention_rotary_dim=44,
+    supported_bitrates_kbps=(1, 6, 12, 24),
 )
 OUTPUT = RECIPE_DIR / "LRAC2-Track1-VoCodec-Model-Design-Sheet.xlsx"
+CONFIG = RECIPE_DIR / "conf" / "train.yaml"
 
 
 def main():
+    validate_config_matches_variant(VARIANT, CONFIG)
     results = create_workbook(VARIANT, OUTPUT)
     print(f"Created {OUTPUT}")
     for name, value in results.items():

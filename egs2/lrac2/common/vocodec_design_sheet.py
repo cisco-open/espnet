@@ -47,6 +47,9 @@ class Variant:
     decoder_convnext_expansion_dim: int
     decoder_posnet_groups_first: tuple
     decoder_posnet_groups_last: tuple
+    attention_use_rope: bool = False
+    attention_rotary_dim: int | None = None
+    supported_bitrates_kbps: tuple = SUPPORTED_BITRATES_KBPS
     parameter_budget: int | None = None
 
     @property
@@ -130,6 +133,11 @@ class LayerSpec:
         if self.mac_kind == "attention":
             # heads * keys * head_dim = keys * channels
             return self.kernel_or_context * self.input_channels
+        if self.mac_kind == "rope_phase":
+            return self.kernel_or_context
+        if self.mac_kind == "rope_rotation":
+            # Two multiply-accumulates per rotated scalar, across all heads.
+            return 2 * self.kernel_or_context * self.groups_or_heads
         return 0
 
     def trainable_parameters(self):
@@ -168,6 +176,10 @@ class LayerSpec:
         if self.state_kind == "stft":
             state_size = FFT_SIZE - variant.hop_size
             return (STATE_READS_PER_CALL + STATE_WRITES_PER_CALL) * state_size
+        if self.state_kind == "rope_inv_freq":
+            # Read the derived inverse-frequency vector once per invocation.
+            # Generated sine/cosine values are retained for both Q and K.
+            return STATE_READS_PER_CALL * (variant.attention_rotary_dim // 2)
         return 0
 
 
@@ -272,7 +284,7 @@ def attention_layers(variant):
         variant.attention_context_frames + variant.attention_lookahead_frames
     )
     hidden_dim = variant.model_dim
-    return [
+    layers = [
         conv_layer(
             "QKV projection",
             block,
@@ -282,6 +294,50 @@ def attention_layers(variant):
             parameter_extra=2 * hidden_dim,
             parameter_extra_note="Attention input LayerNorm scale and bias",
         ),
+    ]
+    if variant.attention_use_rope:
+        layers += [
+            LayerSpec(
+                name="RoPE phase generation",
+                block=block,
+                instances=1,
+                operation=(
+                    "Position × derived inverse frequencies; sine/cosine "
+                    "arithmetic excluded"
+                ),
+                kernel_or_context=variant.attention_rotary_dim // 2,
+                dilation=1,
+                input_channels=hidden_dim,
+                output_channels=hidden_dim,
+                mac_kind="rope_phase",
+                state_kind="rope_inv_freq",
+            ),
+            LayerSpec(
+                name="RoPE query rotation",
+                block=block,
+                instances=1,
+                operation="Pairwise rotary transform of Q",
+                kernel_or_context=variant.attention_rotary_dim,
+                dilation=1,
+                input_channels=hidden_dim,
+                output_channels=hidden_dim,
+                groups_or_heads=variant.attention_heads,
+                mac_kind="rope_rotation",
+            ),
+            LayerSpec(
+                name="RoPE key rotation",
+                block=block,
+                instances=1,
+                operation="Pairwise rotary transform of K before cache use",
+                kernel_or_context=variant.attention_rotary_dim,
+                dilation=1,
+                input_channels=hidden_dim,
+                output_channels=hidden_dim,
+                groups_or_heads=variant.attention_heads,
+                mac_kind="rope_rotation",
+            ),
+        ]
+    layers += [
         LayerSpec(
             name="Query-key score product",
             block=block,
@@ -312,6 +368,7 @@ def attention_layers(variant):
         ),
         conv_layer("Attention output projection", block, 1, hidden_dim, hidden_dim),
     ]
+    return layers
 
 
 def stft_state_layer(component):
@@ -443,12 +500,18 @@ def add_component_sheet(
     attention_heads = (
         variant.attention_heads if is_encoder else f"='{encoder_sheet}'!$B$12"
     )
-    bytes_per_value = BYTES_PER_VALUE if is_encoder else f"='{encoder_sheet}'!$B$14"
+    attention_use_rope = (
+        variant.attention_use_rope if is_encoder else f"='{encoder_sheet}'!$B$13"
+    )
+    attention_rotary_dim = (
+        variant.attention_rotary_dim if is_encoder else f"='{encoder_sheet}'!$B$14"
+    )
+    bytes_per_value = BYTES_PER_VALUE if is_encoder else f"='{encoder_sheet}'!$B$16"
     state_reads_per_call = (
-        STATE_READS_PER_CALL if is_encoder else f"='{encoder_sheet}'!$B$15"
+        STATE_READS_PER_CALL if is_encoder else f"='{encoder_sheet}'!$B$17"
     )
     state_writes_per_call = (
-        STATE_WRITES_PER_CALL if is_encoder else f"='{encoder_sheet}'!$B$16"
+        STATE_WRITES_PER_CALL if is_encoder else f"='{encoder_sheet}'!$B$18"
     )
     transform_latency = (
         (
@@ -479,6 +542,8 @@ def add_component_sheet(
         ),
         ("Attention lookahead (frames)", attention_lookahead),
         ("Attention heads", attention_heads),
+        ("Attention uses RoPE", attention_use_rope),
+        ("RoPE rotary dimensions / head", attention_rotary_dim or 0),
         transform_latency,
         ("Bytes per parameter/buffer value", bytes_per_value),
         ("Runtime state reads per call", state_reads_per_call),
@@ -509,8 +574,8 @@ def add_component_sheet(
         "softmax, and FFT arithmetic are omitted under the LRAC sheet convention. Overall "
         "Stride in B5 drives compute, field-of-view, and memory-bandwidth "
         "formulas. Channel dimensions are centralized in B6:B9, and bounded "
-        "attention settings are centralized in B10:B12. Bytes per value and "
-        "runtime state read/write assumptions are centralized in B14:B16. The "
+        "attention and RoPE settings are centralized in B10:B14. Bytes per value "
+        "and runtime state read/write assumptions are centralized in B16:B18. The "
         "layer table references those cells. All totals derive only from visible "
         "formulas.",
     )
@@ -580,6 +645,10 @@ def add_component_sheet(
             mac_cell = f"=E{row}*G{row}*H{row}/I{row}"
         elif layer.mac_kind == "attention":
             mac_cell = f"=I{row}*E{row}*(G{row}/I{row})"
+        elif layer.mac_kind == "rope_phase":
+            mac_cell = f"=E{row}"
+        elif layer.mac_kind == "rope_rotation":
+            mac_cell = f"=2*E{row}*I{row}"
         else:
             mac_cell = 0
 
@@ -607,16 +676,18 @@ def add_component_sheet(
 
         if layer.state_kind == "causal_conv":
             state_size = f"(E{row}-1)*F{row}*G{row}"
-            state_cell = f"=$B$15*{state_size}+$B$16*{state_size}"
+            state_cell = f"=$B$17*{state_size}+$B$18*{state_size}"
         elif layer.state_kind in ("attention_k", "attention_v"):
-            state_cell = f"=$B$15*($B$10-1+$B$11)*G{row}+$B$16*G{row}"
+            state_cell = f"=$B$17*($B$10-1+$B$11)*G{row}+$B$18*G{row}"
         elif layer.state_kind == "stft":
-            state_cell = "=$B$15*($B$3-$B$4)+$B$16*($B$3-$B$4)"
+            state_cell = "=$B$17*($B$3-$B$4)+$B$18*($B$3-$B$4)"
+        elif layer.state_kind == "rope_inv_freq":
+            state_cell = "=$B$17*($B$14/2)"
         else:
             state_cell = 0
 
         groups_or_heads = layer.groups_or_heads
-        if layer.mac_kind == "attention":
+        if layer.mac_kind in ("attention", "rope_rotation"):
             groups_or_heads = "=$B$12"
         elif groups_or_heads == variant.model_dim:
             groups_or_heads = "=$B$6"
@@ -626,6 +697,10 @@ def add_component_sheet(
         right_context = layer.right_context
         if layer.mac_kind == "attention":
             kernel_or_context = "=$B$10+$B$11"
+        elif layer.mac_kind == "rope_phase":
+            kernel_or_context = "=$B$14/2"
+        elif layer.mac_kind == "rope_rotation":
+            kernel_or_context = "=$B$14"
         elif layer.state_kind == "stft":
             kernel_or_context = "=$B$3"
         if layer.name == "Query-key score product":
@@ -653,8 +728,8 @@ def add_component_sheet(
                 f"=C{row}*O{row}/$B$5*1000",
                 persistent_cell,
                 state_cell,
-                f"=C{row}*$B$5*$B$14*R{row}/10^6",
-                f"=C{row}*$B$5*$B$14*S{row}/10^6",
+                f"=C{row}*$B$5*$B$16*R{row}/10^6",
+                f"=C{row}*$B$5*$B$16*S{row}/10^6",
                 f"=SUM(T{row}:U{row})",
             ]
         )
@@ -672,10 +747,18 @@ def add_component_sheet(
                 "Attention context includes the current frame.",
                 "LRAC 2",
             )
+        elif layer.state_kind == "rope_inv_freq":
+            sheet.cell(row, 19).comment = Comment(
+                "The inverse-frequency vector is derived rather than learned and "
+                "does not count toward the parameter cap. It is read once per "
+                "attention invocation; the generated sine/cosine values are "
+                "retained and reused for both query and key rotation.",
+                "LRAC 2",
+            )
         elif layer.state_kind in ("causal_conv", "stft"):
             sheet.cell(row, 19).comment = Comment(
                 "The first term reads the runtime state and the second term "
-                "writes it. The access counts come from cells B15 and B16.",
+                "writes it. The access counts come from cells B17 and B18.",
                 "LRAC 2",
             )
         if shade_block:
@@ -702,7 +785,7 @@ def add_component_sheet(
         total_row,
         17,
         f"=SUM(Q{first_component}:Q{last_component})"
-        + ("" if is_encoder else "+$B$13"),
+        + ("" if is_encoder else "+$B$15"),
     )
     sheet.cell(
         total_row,
@@ -736,7 +819,7 @@ def add_component_sheet(
     sheet.cell(
         note_row,
         1,
-        "Memory bandwidth uses the bytes-per-value setting in B14 and includes "
+        "Memory bandwidth uses the bytes-per-value setting in B16 and includes "
         "model parameters, model buffers, convolution state, and attention "
         "KV-cache. Parameter-cap "
         "values include trainable parameters and non-runtime model buffers "
@@ -795,14 +878,143 @@ def add_component_sheet(
 
 
 def validate_supported_bitrates(variant):
+    if not variant.supported_bitrates_kbps:
+        raise ValueError("supported_bitrates_kbps must not be empty")
     bits_per_layer = math.log2(CODEBOOK_SIZE)
-    for bitrate in SUPPORTED_BITRATES_KBPS:
+    for bitrate in variant.supported_bitrates_kbps:
         active_layers = bitrate * 1000 / (variant.frame_rate * bits_per_layer)
         if not active_layers.is_integer():
             raise ValueError(f"{bitrate} kbps is not representable by {variant.label}")
+        if not 1 <= active_layers <= variant.rvq_layers:
+            raise ValueError(
+                f"{bitrate} kbps requires {int(active_layers)} RVQ layers, "
+                f"outside the configured range 1..{variant.rvq_layers}"
+            )
+
+
+def validate_variant(variant):
+    """Reject architecture settings that cannot describe the implementation."""
+
+    if variant.model_dim % variant.attention_heads:
+        raise ValueError("model_dim must be divisible by attention_heads")
+    if variant.attention_use_rope:
+        head_dim = variant.model_dim // variant.attention_heads
+        rotary_dim = variant.attention_rotary_dim
+        if rotary_dim is None or rotary_dim <= 0 or rotary_dim % 2:
+            raise ValueError("attention_rotary_dim must be a positive even integer")
+        if rotary_dim > head_dim:
+            raise ValueError("attention_rotary_dim cannot exceed dimension per head")
+    elif variant.attention_rotary_dim not in (None, 0):
+        raise ValueError("attention_rotary_dim must be unset when RoPE is disabled")
+    validate_supported_bitrates(variant)
+
+
+def validate_config_matches_variant(variant, config_path):
+    """Verify that a final recipe config and its design sheet describe one model."""
+
+    import yaml
+
+    with Path(config_path).open(encoding="utf-8") as stream:
+        config = yaml.safe_load(stream)
+    codec_conf = config["codec_conf"]
+    generator = codec_conf["generator_params"]
+    expected_decoder_groups = (tuple(variant.decoder_posnet_groups_first),) * 2 + (
+        tuple(variant.decoder_posnet_groups_last),
+    ) * 2
+    expected = {
+        "sampling_rate": (codec_conf["sampling_rate"], SAMPLE_RATE),
+        "n_fft": (generator["n_fft"], FFT_SIZE),
+        "hop_length": (generator["hop_length"], variant.hop_size),
+        "hidden_dim": (generator["hidden_dim"], variant.model_dim),
+        "encoder_num_convnext_blocks": (
+            generator["encoder_num_convnext_blocks"],
+            6,
+        ),
+        "encoder_convnext_hidden_dim": (
+            generator["encoder_convnext_hidden_dim"],
+            variant.encoder_convnext_expansion_dim,
+        ),
+        "decoder_num_convnext_blocks": (
+            generator["decoder_num_convnext_blocks"],
+            6,
+        ),
+        "decoder_convnext_hidden_dim": (
+            generator["decoder_convnext_hidden_dim"],
+            variant.decoder_convnext_expansion_dim,
+        ),
+        "convnext_kernel_size": (generator["convnext_kernel_size"], 7),
+        "posnet_num_blocks": (generator["posnet_num_blocks"], 4),
+        "posnet_kernel_size": (generator["posnet_kernel_size"], 3),
+        "encoder_posnet_groups": (
+            tuple(generator["encoder_posnet_groups"]),
+            (1, 1),
+        ),
+        "decoder_posnet_groups": (
+            tuple(tuple(groups) for groups in generator["decoder_posnet_groups"]),
+            expected_decoder_groups,
+        ),
+        "attention_after": (generator["attention_after"], 2),
+        "attention_context_frames": (
+            generator["attention_context_frames"],
+            variant.attention_context_frames,
+        ),
+        "attention_lookahead_frames": (
+            generator["attention_lookahead_frames"],
+            variant.attention_lookahead_frames,
+        ),
+        "attention_heads": (generator["attention_heads"], variant.attention_heads),
+        "attention_use_rope": (
+            generator.get("attention_use_rope", False),
+            variant.attention_use_rope,
+        ),
+        "attention_rotary_dim": (
+            generator.get("attention_rotary_dim"),
+            variant.attention_rotary_dim,
+        ),
+        "attention_rope_base": (
+            generator.get("attention_rope_base", 10000.0),
+            10000.0,
+        ),
+        "latent_kernel_size": (generator["latent_kernel_size"], 3),
+        "quantizer_codebook_dim": (generator["quantizer_codebook_dim"], CODEBOOK_DIM),
+        "quantizer_n_q": (generator["quantizer_n_q"], variant.rvq_layers),
+        "quantizer_bins": (generator["quantizer_bins"], CODEBOOK_SIZE),
+        "quantizer_projection_mode": (
+            generator["quantizer_projection_mode"],
+            "per_layer",
+        ),
+        "quantizer_projection_bias": (
+            generator["quantizer_projection_bias"],
+            True,
+        ),
+        "quantizer_projection_norm": (
+            generator["quantizer_projection_norm"],
+            "weight_norm",
+        ),
+        "quantizer_target_bandwidth": (
+            tuple(generator["quantizer_target_bandwidth"]),
+            tuple(variant.supported_bitrates_kbps),
+        ),
+    }
+    mismatches = [
+        f"{name}: config={actual!r}, design={designed!r}"
+        for name, (actual, designed) in expected.items()
+        if actual != designed
+    ]
+    if mismatches:
+        raise ValueError("Config/design mismatch:\n" + "\n".join(mismatches))
 
 
 def add_vq_deployment_note(sheet, variant, last_column):
+    maximum_bitrate = max(variant.supported_bitrates_kbps)
+    rate_ceiling_note = ""
+    if maximum_bitrate < max(SUPPORTED_BITRATES_KBPS):
+        rate_ceiling_note = (
+            f" This design natively supports {', '.join(map(str, variant.supported_bitrates_kbps))} "
+            f"kbps. A request above {maximum_bitrate} kbps, including 32 kbps, "
+            f"is clamped to all {variant.rvq_layers} layers and produces the same "
+            f"output as {maximum_bitrate} kbps."
+        )
     sheet.cell(
         7,
         1,
@@ -817,7 +1029,8 @@ def add_vq_deployment_note(sheet, variant, last_column):
         "receive VQ bandwidth becomes Frame Rate x Bytes per Value x RVQ Layers x "
         "Model Dimension, and the parameter cap gains RVQ Layers x Codebook Size x "
         "Model Dimension values for the materialized receive codebooks. Transmit "
-        "accounting is unchanged. Those alternative values are not included here.",
+        "accounting is unchanged. Those alternative values are not included here."
+        + rate_ceiling_note,
     )
     sheet.merge_cells(start_row=7, start_column=1, end_row=10, end_column=last_column)
     sheet.cell(7, 1).alignment = Alignment(wrap_text=True, vertical="top")
@@ -842,7 +1055,7 @@ def create_vq_transmit_sheet(workbook, variant):
         "Total Compute (MFLOPS)",
         "Parameters (biases and weight norm excluded)",
         "Unique VQ Trainable Parameters",
-        "Maximum Bitrate (kbps)",
+        "Maximum Native Bitrate (kbps)",
         "Latency (ms)",
         "Input Projection Values / Layer",
         "Output Projection Values / Layer",
@@ -873,9 +1086,9 @@ def create_vq_transmit_sheet(workbook, variant):
             "=A4*B4+2*B4",
             "=B4*A4+2*A4",
             "=B4*C4",
-            f"=E4*'{encoder_sheet}'!$B$14*N4/10^6",
-            f"=E4*'{encoder_sheet}'!$B$14*O4/10^6",
-            f"=E4*'{encoder_sheet}'!$B$14*P4/10^6",
+            f"=E4*'{encoder_sheet}'!$B$16*N4/10^6",
+            f"=E4*'{encoder_sheet}'!$B$16*O4/10^6",
+            f"=E4*'{encoder_sheet}'!$B$16*P4/10^6",
             "=SUM(Q4:S4)",
             "=T4*D4",
         ]
@@ -954,8 +1167,8 @@ def create_vq_receive_sheet(workbook, variant):
             0,
             "=B4",
             f"='{transmit_sheet}'!O4",
-            f"=E4*'{encoder_sheet}'!$B$14*K4/10^6",
-            f"=E4*'{encoder_sheet}'!$B$14*L4/10^6",
+            f"=E4*'{encoder_sheet}'!$B$16*K4/10^6",
+            f"=E4*'{encoder_sheet}'!$B$16*L4/10^6",
             "=SUM(M4:N4)",
             "=O4*D4",
         ]
@@ -1028,7 +1241,7 @@ def create_summary_sheet(workbook, variant, encoder_total_row, decoder_total_row
         ],
         [
             "Buffering latency (ms)",
-            f"='{encoder_sheet}'!$B$13",
+            f"='{encoder_sheet}'!$B$15",
             "",
             "",
             "",
@@ -1049,7 +1262,7 @@ def create_summary_sheet(workbook, variant, encoder_total_row, decoder_total_row
             '=IF(B8<=C8,"PASS","OVER BUDGET")',
         ],
         [
-            "Maximum bitrate (kbps)",
+            "Maximum native bitrate (kbps)",
             f"='{vq_transmit_sheet}'!L4",
             "",
             "",
@@ -1122,8 +1335,14 @@ def create_summary_sheet(workbook, variant, encoder_total_row, decoder_total_row
             if variant.parameter_budget
             else ""
         )
-        + "Memory bandwidth includes encoder, maximum-rate RVQ transmit and "
-        "receive paths, and decoder.",
+        + "Memory bandwidth includes encoder, maximum-native-rate RVQ transmit "
+        "and receive paths, and decoder."
+        + (
+            f" Requests above {max(variant.supported_bitrates_kbps)} kbps are "
+            "clamped to the maximum native RVQ prefix."
+            if max(variant.supported_bitrates_kbps) < max(SUPPORTED_BITRATES_KBPS)
+            else ""
+        ),
     )
     sheet.merge_cells(
         start_row=conclusion_row,
@@ -1385,6 +1604,7 @@ def create_workbook(variant, output):
     """Create one workbook at the explicitly requested output path."""
 
     output = Path(output)
+    validate_variant(variant)
     workbook = Workbook()
     del workbook[workbook.sheetnames[0]]
     encoder_total_row = add_component_sheet(
@@ -1425,7 +1645,9 @@ def create_workbook(variant, output):
     assert results["receive_mflops"] <= RECEIVE_BUDGET_MFLOPS
     assert results["transmit_mflops"] <= TRANSMIT_BUDGET_MFLOPS
     assert results["latency_ms"] <= LATENCY_BUDGET_MS
-    assert math.isclose(results["maximum_bitrate_kbps"], 32)
+    assert math.isclose(
+        results["maximum_bitrate_kbps"], max(variant.supported_bitrates_kbps)
+    )
     if variant.parameter_budget is not None:
         assert results["deployed_persistent_values"] <= variant.parameter_budget
     return results
