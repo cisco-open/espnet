@@ -7,7 +7,7 @@ codec_conf:
 
     generator_params:
         # Time-frequency front end: 30 ms square-root Hann window, 10 ms hop.
-        hidden_dim: 96
+        hidden_dim: 112
         n_fft: 720
         hop_length: 240
 
@@ -23,8 +23,8 @@ codec_conf:
         posnet_num_blocks: 4
         posnet_kernel_size: 3
         encoder_posnet_groups: [1, 1]
-        # Track 2 uses dense convolutions in all four decoder PosNet blocks.
-        decoder_posnet_groups: [[1, 1], [1, 1], [1, 1], [1, 1]]
+        # Dense convolutions in blocks 1–2; groups=2 in blocks 3–4.
+        decoder_posnet_groups: [[1, 1], [1, 1], [2, 2], [2, 2]]
         posnet_dropout: 0.1
         attention_after: 2
         attention_heads: 4
@@ -33,13 +33,18 @@ codec_conf:
         attention_lookahead_frames: 0
         # GPU work tile only: this does not add lookahead or latency.
         attention_query_tile_size: 64
+        # Apply RoPE to all 28 dimensions in each of the four attention heads.
+        attention_use_rope: true
+        attention_rotary_dim: 28
+        attention_rope_base: 10000.0
         latent_kernel_size: 3
 
-        # DAC-compatible trainable RVQ, extended to LRAC 2's maximum rate.
+        # DAC-compatible trainable RVQ with a native maximum rate of 24 kbps.
         quantizer_codebook_dim: 8
-        quantizer_n_q: 32
+        quantizer_n_q: 24
         quantizer_bins: 1024
-        # 50% uniformly sample the target rates below; the rest use all 32.
+        # Half the samples use all 24 layers; the other half uniformly samples
+        # the configured target bitrates (1, 6, 12, or 24 kbps).
         quantizer_dropout: 0.5
         quantizer_dropout_sampling: target_bandwidths
         quantizer_projection_mode: per_layer
@@ -47,7 +52,7 @@ codec_conf:
         quantizer_projection_norm: weight_norm
         quantizer_normalized_lookup: true
         quantizer_loss_normalization: full_batch
-        quantizer_target_bandwidth: [1, 6, 12, 24, 32]
+        quantizer_target_bandwidth: [1, 6, 12, 24]
         max_magnitude: 100.0
 
     # EnCodec-style discriminator with the exact VoCodec STFT scales and 1/4 hops.
@@ -159,8 +164,9 @@ skip_discriminator_prob: 0
 ##########################################################
 #                    TRAINING                            #
 ##########################################################
-# One-million-update first scheduler cycle; epoch-based stop at 1700 epochs.
-num_iters_per_epoch: 4000
+# Sample 5,500 training utterances per epoch. The scheduler advances by optimizer
+# update, so the one-million-step cycle is independent of this epoch definition.
+num_iters_per_epoch: 5500
 max_epoch: 1700
 accum_grad: 1
 # Reported global batch: 24 examples/GPU on eight GPUs.
