@@ -1,3 +1,6 @@
+# Copyright 2026 Cisco Systems, Inc. and its affiliates
+# Apache-2.0
+
 """Tests for configurable multi-scale mel-loss aggregation."""
 
 import pytest

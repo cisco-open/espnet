@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright 2026 Cisco Systems, Inc. and its affiliates
+# Apache-2.0
+
 """Build and verify an LRAC 2 VoCodec model-design workbook."""
 
 import math

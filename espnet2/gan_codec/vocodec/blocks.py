@@ -1,3 +1,6 @@
+# Copyright 2026 Cisco Systems, Inc. and its affiliates
+# Apache-2.0
+
 """Bounded-context blocks for the VoCodec generator."""
 
 import math

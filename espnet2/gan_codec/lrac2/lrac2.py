@@ -1,3 +1,6 @@
+# Copyright 2026 Cisco Systems, Inc. and its affiliates
+# Apache-2.0
+
 """LRAC 2 convolutional baseline with DAC-style residual quantization."""
 
 import math

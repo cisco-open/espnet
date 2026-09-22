@@ -1,3 +1,6 @@
+# Copyright 2026 Cisco Systems, Inc. and its affiliates
+# Apache-2.0
+
 # MIT License
 #
 # Copyright (c) 2023 Descript, Inc.

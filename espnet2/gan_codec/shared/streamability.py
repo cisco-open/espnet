@@ -1,3 +1,6 @@
+# Copyright 2026 Cisco Systems, Inc. and its affiliates
+# Apache-2.0
+
 """Utilities for checking whether an audio codec is streamable.
 
 The check is sample based and targets the complete waveform-to-waveform path.  A

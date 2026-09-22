@@ -1,3 +1,6 @@
+# Copyright 2026 Cisco Systems, Inc. and its affiliates
+# Apache-2.0
+
 """VoCodec GAN model for the LRAC 2 Track 1 baseline."""
 
 from typing import Any, Dict, Optional

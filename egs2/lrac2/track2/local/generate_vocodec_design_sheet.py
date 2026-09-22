@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright 2026 Cisco Systems, Inc. and its affiliates
+# Apache-2.0
+
 """Generate and verify the final LRAC 2 Track 2 VoCodec design workbook."""
 
 import sys
