@@ -336,7 +336,7 @@ The total latency reported in the sheets combines frame-hop buffering and
 algorithmic future dependence; it is not measured wall-clock delay. The compute
 calculation excludes FFT arithmetic, and the memory-bandwidth calculation
 follows the explicit persistent-value and state-traffic assumptions documented
-in the workbooks. Deployment measurements are still required.
+in the workbooks.
 
 ## Main implementation files
 
