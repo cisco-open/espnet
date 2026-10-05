@@ -151,7 +151,7 @@ The analytical model-design calculation gives the following constraint values:
 | --- | ---: | ---: |
 | Transmit compute | 384.286 MFLOPS | 190.748 MFLOPS |
 | Receive compute | 294.276 MFLOPS | 132.073 MFLOPS |
-| Algorithmic latency | 30 ms | 30 ms |
+| Total latency (buffering + algorithmic) | 30 ms | 30 ms |
 | Memory bandwidth | 694.883 MB/s | 333.536 MB/s |
 | Track 2 bandwidth penalty | Not applicable | 9.502 |
 
@@ -239,9 +239,25 @@ configured frame rate and codebook size, and within the available RVQ depth.
 All temporal convolutions in the VoCodec path are causal. Self-attention is
 limited to a 300-frame sliding window with zero lookahead, so its memory and
 compute do not grow with utterance duration. RoPE supplies relative positional
-information within this window. The analytical latency is 30 ms: a 10-ms frame
-hop plus 20 ms attributed to inverse-STFT overlap. The three seconds of left
-context are history and therefore do not add lookahead latency.
+information within this window.
+
+The implemented STFT uses centre-aligned hop framing. Let `N` be the window
+size, `H` the hop size, and `E = (N - H) / 2`. Frame `t` is assigned to waveform
+hop `[tH, (t + 1)H - 1]` and covers
+`[tH - E, (t + 1)H + E - 1]`. For `N = 720` and `H = 240`, the 10-ms frame hop
+is buffered first, STFT analysis then needs 240 samples (10 ms) beyond the
+assigned hop, and the matching inverse STFT waits for one later frame (10 ms)
+before finalizing that output hop. This gives 10 ms of buffering plus 20 ms of
+algorithmic lookahead. The analysis and synthesis each retain `N - H = 480`
+samples of overlap state; this state size is not itself latency.
+
+For comparison, a right-aligned STFT assigns frame `t` to the last hop of its
+window. It can produce that frame as soon as the assigned hop is complete, so
+there is no additional analysis lookahead beyond the 10-ms hop buffer. Its
+matching inverse STFT must instead wait for `N - H = 480` samples (20 ms) of
+later frames to complete overlap-add. The two alignments place the delay on
+different sides of the codec. The three seconds of left context used by bounded
+attention are history and therefore do not add lookahead latency.
 
 [`streamability.py`](../../espnet2/gan_codec/shared/streamability.py) provides a
 sample-based check of the complete waveform-to-waveform path. It changes the
@@ -316,11 +332,11 @@ calculator for arbitrary codec architectures. If the implementation or an
 accounting assumption changes, update and validate the formulas before relying
 on a generated sheet.
 
-The latency reported in the sheets is algorithmic latency, not measured
-wall-clock delay. The compute calculation excludes FFT arithmetic, and the
-memory-bandwidth calculation follows the explicit persistent-value and state
-traffic assumptions documented in the workbooks. Deployment measurements are
-still required.
+The total latency reported in the sheets combines frame-hop buffering and
+algorithmic future dependence; it is not measured wall-clock delay. The compute
+calculation excludes FFT arithmetic, and the memory-bandwidth calculation
+follows the explicit persistent-value and state-traffic assumptions documented
+in the workbooks. Deployment measurements are still required.
 
 ## Main implementation files
 

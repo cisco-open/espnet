@@ -21,7 +21,15 @@ PosNetGroups = Union[Tuple[int, int], Sequence[Tuple[int, int]]]
 
 
 class STFTAnalysis(nn.Module):
-    """Square-root-Hann STFT with 30 ms window and 10 ms hop by default."""
+    """Square-root-Hann STFT with centre-aligned hop framing.
+
+    Let ``N`` be ``n_fft``, ``H`` be ``hop_length``, and
+    ``E = (N - H) / 2``. Frame ``t`` is assigned to waveform hop
+    ``[tH, (t + 1)H - 1]`` and covers
+    ``[tH - E, (t + 1)H + E - 1]``. It therefore needs ``E`` samples beyond
+    its assigned hop. With the default 720-sample window and 240-sample hop,
+    that analysis lookahead is 240 samples (10 ms at 24 kHz).
+    """
 
     def __init__(self, n_fft: int = 720, hop_length: int = 240):
         super().__init__()
@@ -59,7 +67,14 @@ class STFTAnalysis(nn.Module):
 
 
 class STFTSynthesis(nn.Module):
-    """Overlap-add inverse matching :class:`STFTAnalysis`."""
+    """Overlap-add inverse matching :class:`STFTAnalysis`.
+
+    The inverse frames use the same centre-aligned placement. With the default
+    720/240 configuration, output hop ``t`` is finalized when frame ``t + 1``
+    is available, so synthesis has one hop (240 samples) of frame lookahead.
+    Streaming overlap-add still retains ``n_fft - hop_length`` samples of state;
+    that state size is distinct from the synthesis lookahead.
+    """
 
     def __init__(
         self,

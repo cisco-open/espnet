@@ -51,6 +51,23 @@ def test_stft_analysis_synthesis_is_length_preserving():
     torch.testing.assert_close(reconstructed, x, atol=1e-5, rtol=1e-5)
 
 
+def test_stft_analysis_uses_centre_aligned_hop_framing():
+    analysis = STFTAnalysis(n_fft=12, hop_length=4)
+    reference = torch.zeros(1, 1, 16)
+
+    inside_next_hop = reference.clone()
+    inside_next_hop[..., 7] = 1.0
+    outside_frame = reference.clone()
+    outside_frame[..., 8] = 1.0
+
+    reference_frame = analysis(reference)[..., 0]
+    inside_frame = analysis(inside_next_hop)[..., 0]
+    outside_frame = analysis(outside_frame)[..., 0]
+
+    assert not torch.allclose(reference_frame, inside_frame)
+    torch.testing.assert_close(reference_frame, outside_frame)
+
+
 def test_generator_forward_encode_and_decode():
     generator = tiny_generator().eval()
     assert generator.dropout_num_quantizers == (1, 2)

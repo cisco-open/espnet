@@ -36,6 +36,15 @@ WHITE = "FFFFFF"
 THIN_GRAY = Side(style="thin", color="B7B7B7")
 
 
+def stft_edge_padding(hop_size):
+    """Return the per-side padding used by the centre-aligned STFT."""
+
+    difference = FFT_SIZE - hop_size
+    if difference < 0 or difference % 2:
+        raise ValueError("FFT_SIZE - hop_size must be non-negative and even")
+    return difference // 2
+
+
 @dataclass(frozen=True)
 class Variant:
     track: int
@@ -374,8 +383,10 @@ def attention_layers(variant):
     return layers
 
 
-def stft_state_layer(component):
-    """Account for the persistent window and streaming overlap state."""
+def stft_state_layer(component, hop_size):
+    """Account for centre-aligned STFT context and persistent overlap state."""
+
+    edge_padding = stft_edge_padding(hop_size)
 
     return LayerSpec(
         name=f"{component} window and overlap state",
@@ -388,6 +399,8 @@ def stft_state_layer(component):
         output_channels=1,
         state_kind="stft",
         persistent_override=FFT_SIZE,
+        left_context=edge_padding,
+        right_context=edge_padding,
         context_domain="sample",
     )
 
@@ -395,7 +408,7 @@ def stft_state_layer(component):
 def encoder_components(variant):
     hidden_dim = variant.model_dim
     layers = [
-        stft_state_layer("STFT analysis"),
+        stft_state_layer("STFT analysis", variant.hop_size),
         conv_layer(
             "STFT feature projection",
             "Encoder input",
@@ -429,7 +442,7 @@ def encoder_components(variant):
 def decoder_components(variant):
     hidden_dim = variant.model_dim
     layers = [
-        stft_state_layer("ISTFT synthesis"),
+        stft_state_layer("ISTFT synthesis", variant.hop_size),
         conv_layer(
             "Latent projection",
             "Decoder input",
@@ -518,13 +531,13 @@ def add_component_sheet(
     )
     transform_latency = (
         (
-            "STFT buffering latency (ms)",
+            "Frame-hop buffering latency (ms)",
             "=$B$4/$B$2*1000",
         )
         if is_encoder
         else (
-            "ISTFT algorithmic latency (ms)",
-            "=($B$3-$B$4)/$B$2*1000",
+            "ISTFT synthesis lookahead (ms)",
+            "=(($B$3-$B$4)/2)/$B$2*1000",
         )
     )
     settings = (
@@ -706,9 +719,13 @@ def add_component_sheet(
             kernel_or_context = "=$B$14"
         elif layer.state_kind == "stft":
             kernel_or_context = "=$B$3"
+            left_context = "=($B$3-$B$4)/2"
+            right_context = "=($B$3-$B$4)/2"
         if layer.name == "Query-key score product":
             left_context = "=$B$10-1"
             right_context = "=$B$11"
+
+        context_rate = "$B$2" if layer.context_domain == "sample" else "$B$5"
 
         sheet.append(
             [
@@ -727,8 +744,8 @@ def add_component_sheet(
                 f"=C{row}*L{row}",
                 left_context,
                 right_context,
-                f"=C{row}*N{row}/$B$5*1000",
-                f"=C{row}*O{row}/$B$5*1000",
+                f"=C{row}*N{row}/{context_rate}*1000",
+                f"=C{row}*O{row}/{context_rate}*1000",
                 persistent_cell,
                 state_cell,
                 f"=C{row}*$B$5*$B$16*R{row}/10^6",
@@ -787,8 +804,7 @@ def add_component_sheet(
     sheet.cell(
         total_row,
         17,
-        f"=SUM(Q{first_component}:Q{last_component})"
-        + ("" if is_encoder else "+$B$15"),
+        f"=SUM(Q{first_component}:Q{last_component})",
     )
     sheet.cell(
         total_row,
@@ -832,7 +848,9 @@ def add_component_sheet(
         "convention. Attention MACs "
         "assume that the configured context buffer is fully populated; startup "
         "frames require less compute. FOV left is history, not latency; only FOV "
-        "right contributes to algorithmic latency. STFT/ISTFT window and "
+        "right contributes to algorithmic latency. STFT/ISTFT frames use centred "
+        "hop alignment and have (FFT size - hop) / 2 samples of left and right "
+        "context. Their overlap state remains FFT size - hop samples. Window and "
         "overlap-state bandwidth is shown explicitly in the first table row; FFT "
         "arithmetic is excluded.",
     )
@@ -898,6 +916,7 @@ def validate_supported_bitrates(variant):
 def validate_variant(variant):
     """Reject architecture settings that cannot describe the implementation."""
 
+    stft_edge_padding(variant.hop_size)
     if variant.model_dim % variant.attention_heads:
         raise ValueError("model_dim must be divisible by attention_heads")
     if variant.attention_use_rope:
@@ -1450,9 +1469,7 @@ def calculate_variant(variant):
         )
     )
     encoder_latency_ms = algorithmic_latency_ms(encoder_layers)
-    decoder_latency_ms = algorithmic_latency_ms(decoder_layers) + (
-        (FFT_SIZE - variant.hop_size) / SAMPLE_RATE * 1000
-    )
+    decoder_latency_ms = algorithmic_latency_ms(decoder_layers)
     return {
         "encoder_formula_mmac": encoder_layer_mmac,
         "encoder_mflops": 2 * encoder_layer_mmac,
@@ -1603,6 +1620,68 @@ def validate_vq_formulas(workbook, variant, encoder_total_row, decoder_total_row
             )
 
 
+def validate_latency_formulas(workbook, variant, encoder_total_row, decoder_total_row):
+    """Check that workbook latency formulas match the centred STFT framing."""
+
+    encoder = workbook[variant.sheet_name("Encoder")]
+    decoder = workbook[variant.sheet_name("Decoder")]
+    summary = workbook[variant.sheet_name("Summary")]
+    expected_settings = {
+        (encoder, "A15"): "Frame-hop buffering latency (ms)",
+        (encoder, "B15"): "=$B$4/$B$2*1000",
+        (decoder, "A15"): "ISTFT synthesis lookahead (ms)",
+        (decoder, "B15"): "=(($B$3-$B$4)/2)/$B$2*1000",
+    }
+    for (sheet, coordinate), expected in expected_settings.items():
+        if sheet[coordinate].value != expected:
+            raise ValueError(
+                f"Unexpected latency setting in {sheet.title}!{coordinate}"
+            )
+
+    for component_name, components, total_row in (
+        ("Encoder", encoder_components(variant), encoder_total_row),
+        ("Decoder", decoder_components(variant), decoder_total_row),
+    ):
+        sheet = workbook[variant.sheet_name(component_name)]
+        stft_row = total_row - len(components)
+        expected_cells = {
+            f"N{stft_row}": "=($B$3-$B$4)/2",
+            f"O{stft_row}": "=($B$3-$B$4)/2",
+            f"P{stft_row}": f"=C{stft_row}*N{stft_row}/$B$2*1000",
+            f"Q{stft_row}": f"=C{stft_row}*O{stft_row}/$B$2*1000",
+            f"Q{total_row}": f"=SUM(Q{stft_row}:Q{total_row - 1})",
+        }
+        for coordinate, expected in expected_cells.items():
+            if sheet[coordinate].value != expected:
+                raise ValueError(
+                    f"Unexpected latency formula in {sheet.title}!{coordinate}"
+                )
+
+    expected_summary = {
+        "B6": f"='{variant.sheet_name('Encoder')}'!$B$15",
+        "B7": (
+            f"='{variant.sheet_name('Encoder')}'!Q{encoder_total_row}"
+            f"+'{variant.sheet_name('Decoder')}'!Q{decoder_total_row}"
+        ),
+        "B8": "=SUM(B6:B7)",
+    }
+    for coordinate, expected in expected_summary.items():
+        if summary[coordinate].value != expected:
+            raise ValueError(f"Unexpected latency formula in Summary!{coordinate}")
+
+    edge_latency_ms = stft_edge_padding(variant.hop_size) / SAMPLE_RATE * 1000
+    results = calculate_variant(variant)
+    expected_values = {
+        "buffering_latency_ms": variant.hop_size / SAMPLE_RATE * 1000,
+        "encoder_algorithmic_latency_ms": edge_latency_ms,
+        "decoder_algorithmic_latency_ms": edge_latency_ms,
+        "latency_ms": FFT_SIZE / SAMPLE_RATE * 1000,
+    }
+    for name, expected in expected_values.items():
+        if not math.isclose(results[name], expected):
+            raise ValueError(f"Unexpected Python latency calculation for {name}")
+
+
 def create_workbook(variant, output):
     """Create one workbook at the explicitly requested output path."""
 
@@ -1629,6 +1708,9 @@ def create_workbook(variant, output):
         workbook, variant, encoder_total_row, decoder_total_row
     )
     validate_vq_formulas(workbook, variant, encoder_total_row, decoder_total_row)
+    validate_latency_formulas(
+        workbook, variant, encoder_total_row, decoder_total_row
+    )
 
     workbook.properties.title = (
         f"LRAC 2 Track {variant.track} VoCodec {variant.label} Design"
