@@ -17,8 +17,20 @@ for the complete definitions and submission rules.
 
 The current baseline is adapted from VoCodec [1]. The recipes, configurations,
 implementation, validation tools, and model-design workbooks are included here.
-Final trained checkpoints and a paper describing the LRAC 2.0 baseline system
-in greater detail will be added in a future update.
+
+## Baseline checkpoints
+
+The final trained baseline checkpoints are available for both tracks:
+
+- [Track 1 baseline checkpoint](track1/baseline_model/LRAC2026_Track1_baseline_model.pth)
+- [Track 2 baseline checkpoint](track2/baseline_model/LRAC2026_Track2_baseline_model.pth)
+
+Both checkpoints contain the model state saved after epoch 1700. The model
+weights are distributed under the Creative Commons Attribution-NonCommercial
+4.0 International license; see the license files accompanying the
+[Track 1](track1/baseline_model/LICENSE.txt) and
+[Track 2](track2/baseline_model/LICENSE.txt) checkpoints. A paper describing
+the LRAC 2.0 baseline system in greater detail will be added in a future update.
 
 ## Getting started
 
