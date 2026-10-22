@@ -67,8 +67,11 @@ Each track uses the following seven stages:
 
 1. **Data checks:** verify that the data directories produced by the LRAC
    data-generation repository are present.
-2. **Formatting:** format `wav.scp` and `reference.scp` and write the results
-   under `dump/raw`.
+2. **Formatting:** format the codec inputs from `wav.scp` and write them under
+   `dump/raw`. This baseline does not apply speech enhancement, so copy the
+   formatted `wav.scp` to `reference.scp`; intrusive transparency metrics
+   compare its output with its exact input, whether noisy, reverberant, or
+   clean. For an enhancement codec, use the clean signal as the reference.
 3. **Data filtering:** remove training and validation recordings outside the
    duration limits defined in `codec.sh`. Evaluation sets are not filtered.
 4. **Statistics collection:** skipped because the codec operates directly on

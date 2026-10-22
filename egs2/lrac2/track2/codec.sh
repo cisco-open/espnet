@@ -283,20 +283,12 @@ if ! "${skip_data_prep}"; then
         done
 
         for dset in ${test_sets}; do
-            _opts=
-            if [ -e data/"${dset}"/segments ]; then
-                _opts+="--segments data/${dset}/segments "
-            fi
-
-            reference_scp="data/${dset}/reference.scp"
-            if [ ! -e "${reference_scp}" ]; then
-                reference_scp="data/${dset}/wav.scp"
-                log "No reference.scp for ${dset}; using wav.scp as the codec reference"
-            fi
-
-            scripts/audio/format_wav_scp.sh --nj "${nj}" --cmd "${train_cmd}" \
-                --audio-format "${audio_format}" --fs "${fs}" --out_filename "reference.scp" ${_opts} \
-                "${reference_scp}" "${data_feats}/${dset}"
+            # This baseline does not apply speech enhancement, so its intrusive
+            # transparency metrics compare the output with the exact codec input,
+            # whether noisy, reverberant, or clean. For an enhancement codec, use
+            # the clean signal as the reference.
+            cp "${data_feats}/${dset}/wav.scp" \
+                "${data_feats}/${dset}/reference.scp"
         done
     fi
 

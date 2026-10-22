@@ -11,8 +11,7 @@ fs=24000
 
 train_set=train
 valid_set=train_validation
-test_sets="evaluation \
-open-evaluation/open_testset_track1_clean \
+test_sets="open-evaluation/open_testset_track1_clean \
 open-evaluation/open_testset_track1_noisy \
 open-evaluation/open_testset_track1_reverb \
 test-clean \
