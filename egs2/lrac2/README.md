@@ -22,8 +22,10 @@ implementation, validation tools, and model-design workbooks are included here.
 
 The final trained baseline checkpoints are available for both tracks:
 
-- [Track 1 baseline checkpoint](track1/baseline_model/LRAC2026_Track1_baseline_model.pth)
-- [Track 2 baseline checkpoint](track2/baseline_model/LRAC2026_Track2_baseline_model.pth)
+- Track 1: [baseline checkpoint](track1/baseline_model/LRAC2026_Track1_baseline_model.pth)
+  and [saved configuration](track1/baseline_model/config.yaml)
+- Track 2: [baseline checkpoint](track2/baseline_model/LRAC2026_Track2_baseline_model.pth)
+  and [saved configuration](track2/baseline_model/config.yaml)
 
 Both checkpoints contain the model state saved after epoch 1700. The model
 weights are distributed under the Creative Commons Attribution-NonCommercial
