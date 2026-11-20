@@ -32,7 +32,7 @@ requirements = {
         "opt-einsum",
         "lightning",
         # ASR
-        "sentencepiece==0.2.0",
+        "sentencepiece==0.2.1",
         "ctc-segmentation>=1.6.6",
         # TTS
         "pyworld>=0.3.4",
@@ -53,7 +53,7 @@ requirements = {
     # train: The modules invoked when training only.
     "train": [
         "matplotlib",
-        "pillow==9.5.0",
+        "pillow==12.3.0",
         "wandb",
         "tensorboard>=1.14",
     ],
