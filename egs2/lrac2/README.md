@@ -31,8 +31,11 @@ Both checkpoints contain the model state saved after epoch 1700. The model
 weights are distributed under the Creative Commons Attribution-NonCommercial
 4.0 International license; see the license files accompanying the
 [Track 1](track1/baseline_model/LICENSE.txt) and
-[Track 2](track2/baseline_model/LICENSE.txt) checkpoints. A paper describing
-the LRAC 2.0 baseline system in greater detail will be added in a future update.
+[Track 2](track2/baseline_model/LICENSE.txt) checkpoints.
+
+A detailed description of the architecture, training procedure, evaluation,
+and analysis of both baseline systems is available in the
+[LRAC 2.0 baseline system description report](LRAC2_Baseline_Systems.pdf).
 
 ## Getting started
 
@@ -168,14 +171,16 @@ The analytical model-design calculation gives the following constraint values:
 | --- | ---: | ---: |
 | Transmit compute | 384.286 MFLOPS | 190.748 MFLOPS |
 | Receive compute | 294.276 MFLOPS | 132.073 MFLOPS |
+| Total compute | 678.562 MFLOPS | 322.821 MFLOPS |
 | Total latency (buffering + algorithmic) | 30 ms | 30 ms |
 | Memory bandwidth | 694.883 MB/s | 333.536 MB/s |
 | Track 2 bandwidth penalty | Not applicable | 9.502 |
 
 Under the assumptions encoded by the design-sheet generator, Track 1 remains
-within the 400-MFLOPS transmit, 300-MFLOPS receive, and 30-ms latency limits.
-Track 2 meets the same limits and its additional 1.5-million-parameter cap.
-The challenge rules, rather than this summary, are authoritative.
+within the 300-MFLOPS receive, 700-MFLOPS total-compute, and 30-ms latency
+limits. Transmit compute has no separate limit. Track 2 meets the same limits
+and its additional 1.5-million-parameter cap. The challenge rules, rather than
+this summary, are authoritative.
 
 ## DAC-style residual vector quantizer
 
@@ -325,9 +330,9 @@ raises an exception on failure.
 [`common/vocodec_design_sheet.py`](common/vocodec_design_sheet.py) is the shared
 analytical calculator and Excel-workbook generator. It validates that each
 track's `train.yaml` agrees with its declared model variant, calculates
-parameters, persistent values, transmit and receive compute, memory bandwidth,
-field of view, and algorithmic latency, checks the configured limits, and then
-writes the workbook.
+parameters, persistent values, transmit, receive, and total compute, memory
+bandwidth, field of view, and algorithmic latency, checks the configured
+limits, and then writes the workbook.
 
 From `egs2/lrac2`, regenerate both final workbooks with:
 

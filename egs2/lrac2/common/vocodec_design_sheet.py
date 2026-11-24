@@ -22,8 +22,8 @@ BYTES_PER_VALUE = 2
 STATE_READS_PER_CALL = 1
 STATE_WRITES_PER_CALL = 1
 
-TRANSMIT_BUDGET_MFLOPS = 400
 RECEIVE_BUDGET_MFLOPS = 300
+TOTAL_BUDGET_MFLOPS = 700
 LATENCY_BUDGET_MS = 30
 MEMORY_BANDWIDTH_PMAX = 15
 SUPPORTED_BITRATES_KBPS = (1, 6, 12, 24, 32)
@@ -1250,9 +1250,9 @@ def create_summary_sheet(workbook, variant, encoder_total_row, decoder_total_row
         [
             "Transmit compute (MFLOPS)",
             f"='{encoder_sheet}'!K{encoder_total_row}*2" f"+'{vq_transmit_sheet}'!I4",
-            TRANSMIT_BUDGET_MFLOPS,
-            "=C4-B4",
-            '=IF(B4<=C4,"PASS","OVER BUDGET")',
+            "No separate cap",
+            "",
+            "N/A",
         ],
         [
             "Receive compute (MFLOPS)",
@@ -1260,6 +1260,13 @@ def create_summary_sheet(workbook, variant, encoder_total_row, decoder_total_row
             RECEIVE_BUDGET_MFLOPS,
             "=C5-B5",
             '=IF(B5<=C5,"PASS","OVER BUDGET")',
+        ],
+        [
+            "Total compute (MFLOPS)",
+            "=SUM(B4:B5)",
+            TOTAL_BUDGET_MFLOPS,
+            "=C6-B6",
+            '=IF(B6<=C6,"PASS","OVER BUDGET")',
         ],
         [
             "Buffering latency (ms)",
@@ -1278,10 +1285,10 @@ def create_summary_sheet(workbook, variant, encoder_total_row, decoder_total_row
         ],
         [
             "Total latency (ms)",
-            "=SUM(B6:B7)",
+            "=SUM(B7:B8)",
             LATENCY_BUDGET_MS,
-            "=C8-B8",
-            '=IF(B8<=C8,"PASS","OVER BUDGET")',
+            "=C9-B9",
+            '=IF(B9<=C9,"PASS","OVER BUDGET")',
         ],
         [
             "Maximum native bitrate (kbps)",
@@ -1305,21 +1312,22 @@ def create_summary_sheet(workbook, variant, encoder_total_row, decoder_total_row
             f"+'{vq_transmit_sheet}'!K4"
             f"+'{decoder_sheet}'!R{decoder_total_row}",
             variant.parameter_budget or "",
-            "=C11-B11" if variant.parameter_budget else "",
-            '=IF(B11<=C11,"PASS","OVER BUDGET")' if variant.parameter_budget else "",
+            "=C12-B12" if variant.parameter_budget else "",
+            '=IF(B12<=C12,"PASS","OVER BUDGET")' if variant.parameter_budget else "",
         ],
     ]
     for row in rows:
         sheet.append(row)
-    style_table(sheet, 3, 11, 1, 5)
-    for row in (4, 5, 8):
+    style_table(sheet, 3, 12, 1, 5)
+    sheet.cell(4, 5).fill = PatternFill("solid", fgColor=LIGHT_BLUE)
+    for row in (5, 6, 9):
         sheet.cell(row, 5).fill = PatternFill("solid", fgColor=GREEN)
         sheet.cell(row, 5).font = Font(bold=True)
     if variant.parameter_budget:
-        sheet.cell(11, 5).fill = PatternFill("solid", fgColor=GREEN)
-        sheet.cell(11, 5).font = Font(bold=True)
+        sheet.cell(12, 5).fill = PatternFill("solid", fgColor=GREEN)
+        sheet.cell(12, 5).font = Font(bold=True)
 
-    memory_start = 13
+    memory_start = 14
     sheet.cell(memory_start, 1, "MEMORY BANDWIDTH AT MAXIMUM BITRATE")
     sheet.merge_cells(
         start_row=memory_start,
@@ -1334,24 +1342,25 @@ def create_summary_sheet(workbook, variant, encoder_total_row, decoder_total_row
         ["RVQ transmit memory bandwidth (MB/s)", f"='{vq_transmit_sheet}'!U4"],
         ["RVQ receive memory bandwidth (MB/s)", f"='{vq_receive_sheet}'!P4"],
         ["Decoder memory bandwidth (MB/s)", f"='{decoder_sheet}'!V{decoder_total_row}"],
-        ["Total codec memory bandwidth (MB/s)", "=SUM(B14:B17)"],
+        ["Total codec memory bandwidth (MB/s)", "=SUM(B15:B18)"],
         ["Penalty maximum P_max", MEMORY_BANDWIDTH_PMAX],
-        ["Bandwidth penalty P(B)", bandwidth_penalty_formula("B18", "$B$19")],
+        ["Bandwidth penalty P(B)", bandwidth_penalty_formula("B19", "$B$20")],
     ]
     for row in memory_rows:
         sheet.append(row)
-    style_table(sheet, 14, 20, 1, 5)
-    sheet["B19"].fill = PatternFill("solid", fgColor=LIGHT_BLUE)
-    sheet["B19"].font = Font(bold=True)
-    for row in range(14, 21):
+    style_table(sheet, 15, 21, 1, 5)
+    sheet["B20"].fill = PatternFill("solid", fgColor=LIGHT_BLUE)
+    sheet["B20"].font = Font(bold=True)
+    for row in range(15, 22):
         sheet[f"B{row}"].number_format = "0.0000"
 
-    conclusion_row = 23
+    conclusion_row = 24
     sheet.cell(
         conclusion_row,
         1,
-        f"The {variant.label} design meets the transmitter compute, receiver "
-        f"compute, and total-latency Track {variant.track} limits. "
+        f"The {variant.label} design meets the receiver-compute, total-compute, "
+        f"and total-latency Track {variant.track} limits. Transmit compute has "
+        "no separate limit. "
         + (
             "It also meets the parameter-cap value limit. "
             if variant.parameter_budget
@@ -1470,14 +1479,17 @@ def calculate_variant(variant):
     )
     encoder_latency_ms = algorithmic_latency_ms(encoder_layers)
     decoder_latency_ms = algorithmic_latency_ms(decoder_layers)
+    transmit_mflops = 2 * encoder_layer_mmac + vq_transmit_mflops
+    receive_mflops = vq_receive_mflops + 2 * decoder_layer_mmac
     return {
         "encoder_formula_mmac": encoder_layer_mmac,
         "encoder_mflops": 2 * encoder_layer_mmac,
         "vq_transmit_mflops": vq_transmit_mflops,
         "vq_receive_mflops": vq_receive_mflops,
-        "transmit_mflops": 2 * encoder_layer_mmac + vq_transmit_mflops,
+        "transmit_mflops": transmit_mflops,
         "decoder_formula_mmac": decoder_layer_mmac,
-        "receive_mflops": vq_receive_mflops + 2 * decoder_layer_mmac,
+        "receive_mflops": receive_mflops,
+        "total_mflops": transmit_mflops + receive_mflops,
         "buffering_latency_ms": variant.hop_size / SAMPLE_RATE * 1000,
         "encoder_algorithmic_latency_ms": encoder_latency_ms,
         "decoder_algorithmic_latency_ms": decoder_latency_ms,
@@ -1561,7 +1573,7 @@ def validate_persistent_value_formulas(
         f"+'{variant.sheet_name('VQ-Transmit')}'!K4"
         f"+'{variant.sheet_name('Decoder')}'!R{decoder_total_row}"
     )
-    if summary["B11"].value != expected_summary_formula:
+    if summary["B12"].value != expected_summary_formula:
         raise ValueError("Summary must use the component persistent-value totals")
 
     rvq_total = (
@@ -1609,9 +1621,10 @@ def validate_vq_formulas(workbook, variant, encoder_total_row, decoder_total_row
         (summary, "B5"): (
             f"='{receive_name}'!G4+'{decoder_name}'!K{decoder_total_row}*2"
         ),
-        (summary, "B15"): f"='{transmit_name}'!U4",
-        (summary, "B16"): f"='{receive_name}'!P4",
-        (summary, "B18"): "=SUM(B14:B17)",
+        (summary, "B6"): "=SUM(B4:B5)",
+        (summary, "B16"): f"='{transmit_name}'!U4",
+        (summary, "B17"): f"='{receive_name}'!P4",
+        (summary, "B19"): "=SUM(B15:B18)",
     }
     for (sheet, coordinate), expected in expected_cells.items():
         if sheet[coordinate].value != expected:
@@ -1658,12 +1671,12 @@ def validate_latency_formulas(workbook, variant, encoder_total_row, decoder_tota
                 )
 
     expected_summary = {
-        "B6": f"='{variant.sheet_name('Encoder')}'!$B$15",
-        "B7": (
+        "B7": f"='{variant.sheet_name('Encoder')}'!$B$15",
+        "B8": (
             f"='{variant.sheet_name('Encoder')}'!Q{encoder_total_row}"
             f"+'{variant.sheet_name('Decoder')}'!Q{decoder_total_row}"
         ),
-        "B8": "=SUM(B6:B7)",
+        "B9": "=SUM(B7:B8)",
     }
     for coordinate, expected in expected_summary.items():
         if summary[coordinate].value != expected:
@@ -1728,7 +1741,7 @@ def create_workbook(variant, output):
 
     results = calculate_variant(variant)
     assert results["receive_mflops"] <= RECEIVE_BUDGET_MFLOPS
-    assert results["transmit_mflops"] <= TRANSMIT_BUDGET_MFLOPS
+    assert results["total_mflops"] <= TOTAL_BUDGET_MFLOPS
     assert results["latency_ms"] <= LATENCY_BUDGET_MS
     assert math.isclose(
         results["maximum_bitrate_kbps"], max(variant.supported_bitrates_kbps)
